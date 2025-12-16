@@ -1,3 +1,4 @@
+export const AT = '@'
 export const DELIMITER = ' '
 export const DOT = '.'
 export const UNDERSCORE = '_'

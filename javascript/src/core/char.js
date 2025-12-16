@@ -1,4 +1,5 @@
 import {
+    AT,
     DELIMITER,
     DOT,
     UNDERSCORE,
@@ -38,7 +39,8 @@ export class Char {
             this.value === DOT ||
             this.value === COLON ||
             this.value === SLASH ||
-            this.value === HYPHEN
+            this.value === HYPHEN ||
+            this.value === AT
         )
     }
 

@@ -10,14 +10,14 @@ from flyql.generators.clickhouse.field import Field
 from flyql.generators.clickhouse.helpers import validate_operation
 
 OPERATOR_TO_CLICKHOUSE_FUNC = {
-    Operator.EQUALS.value: "equals",
-    Operator.NOT_EQUALS.value: "notEquals",
-    Operator.EQUALS_REGEX.value: "match",
-    Operator.NOT_EQUALS_REGEX.value: "match",
-    Operator.GREATER_THAN.value: "greater",
-    Operator.LOWER_THAN.value: "less",
-    Operator.GREATER_OR_EQUALS_THAN.value: "greaterOrEquals",
-    Operator.LOWER_OR_EQUALS_THAN.value: "lessOrEquals",
+    Operator.EQUALS.value: "=",
+    Operator.NOT_EQUALS.value: "!=",
+    Operator.EQUALS_REGEX.value: "regexp",
+    Operator.NOT_EQUALS_REGEX.value: "regexp",
+    Operator.GREATER_THAN.value: ">",
+    Operator.LOWER_THAN.value: "<",
+    Operator.GREATER_OR_EQUALS_THAN.value: ">=",
+    Operator.LOWER_OR_EQUALS_THAN.value: "<=",
 }
 
 LIKE_PATTERN_CHAR = "*"
@@ -177,10 +177,10 @@ def expression_to_sql(expression: Expression, fields: Mapping[str, Field]) -> st
 
         if expression.operator == Operator.EQUALS_REGEX.value:
             value = escape_param(str(expression.value))
-            text = f"match({field.name}, {value})"
+            text = f"regexp({field.name}, {value})"
         elif expression.operator == Operator.NOT_EQUALS_REGEX.value:
             value = escape_param(str(expression.value))
-            text = f"not match({field.name}, {value})"
+            text = f"not regexp({field.name}, {value})"
         elif expression.operator in [Operator.EQUALS.value, Operator.NOT_EQUALS.value]:
             operator = expression.operator
             is_like_pattern, value = prepare_like_pattern_value(str(expression.value))

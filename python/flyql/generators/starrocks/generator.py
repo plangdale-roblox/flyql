@@ -177,10 +177,10 @@ def expression_to_sql(expression: Expression, fields: Mapping[str, Field]) -> st
 
         if expression.operator == Operator.EQUALS_REGEX.value:
             value = escape_param(str(expression.value))
-            text = f"regexp({field.name}, {value})"
+            text = f"regexp(`{field.name}`, {value})"
         elif expression.operator == Operator.NOT_EQUALS_REGEX.value:
             value = escape_param(str(expression.value))
-            text = f"not regexp({field.name}, {value})"
+            text = f"not regexp(`{field.name}`, {value})"
         elif expression.operator in [Operator.EQUALS.value, Operator.NOT_EQUALS.value]:
             operator = expression.operator
             is_like_pattern, value = prepare_like_pattern_value(str(expression.value))
@@ -190,13 +190,13 @@ def expression_to_sql(expression: Expression, fields: Mapping[str, Field]) -> st
                     operator = "LIKE"
                 else:
                     operator = "NOT LIKE"
-            text = f"{field.name} {operator} {value}"
+            text = f"`{field.name}` {operator} {value}"
         else:
             if isinstance(expression.value, (int, float)):
                 value = str(expression.value)
             else:
                 value = escape_param(str(expression.value))
-            text = f"{field.name} {expression.operator} {value}"
+            text = f"`{field.name}` {expression.operator} {value}"
     return text
 
 

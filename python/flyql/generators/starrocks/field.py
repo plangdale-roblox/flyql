@@ -23,11 +23,11 @@ REGEX = {
     NORMALIZED_TYPE_FLOAT: re.compile(
         r"^(decimal|float|double)\d*\s*\(\s*\d+\s*(,\s*\d+)?\s*\)"
     ),
-    NORMALIZED_TYPE_DATE: re.compile(r"^datetime\s*\(\s*\d+\s*(,\s*.+)?\s*\)"),
-    NORMALIZED_TYPE_ARRAY: re.compile(r"^array\s*\("),
-    NORMALIZED_TYPE_MAP: re.compile(r"^map\s*\("),
-    NORMALIZED_TYPE_STRUCT: re.compile(r"^struct\s*\("),
-    NORMALIZED_TYPE_JSON: re.compile(r"^json\s*\("),
+    NORMALIZED_TYPE_DATE: re.compile(r"^datetime"),
+    NORMALIZED_TYPE_ARRAY: re.compile(r"^array\s*\<"),
+    NORMALIZED_TYPE_MAP: re.compile(r"^map\s*\<"),
+    NORMALIZED_TYPE_STRUCT: re.compile(r"^struct\s*\<"),
+    NORMALIZED_TYPE_JSON: re.compile(r"^json"),
 }
 
 

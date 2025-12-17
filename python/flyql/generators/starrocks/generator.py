@@ -1,15 +1,15 @@
 import re
-from typing import List, Mapping, Optional, Tuple, Union, Any
+from typing import Mapping, Tuple, Any
 
 from flyql.core.exceptions import FlyqlError
 from flyql.core.expression import Expression
 from flyql.core.constants import Operator
 from flyql.core.tree import Node
 
-from flyql.generators.clickhouse.field import Field
-from flyql.generators.clickhouse.helpers import validate_operation
+from flyql.generators.starrocks.field import Field
+from flyql.generators.starrocks.helpers import validate_operation
 
-OPERATOR_TO_CLICKHOUSE_FUNC = {
+OPERATOR_TO_STARROCKS_OPERATOR = {
     Operator.EQUALS.value: "=",
     Operator.NOT_EQUALS.value: "!=",
     Operator.EQUALS_REGEX.value: "regexp",
@@ -103,7 +103,7 @@ def expression_to_sql(expression: Expression, fields: Mapping[str, Field]) -> st
         reverse_operator = ""
         if expression.operator == Operator.NOT_EQUALS_REGEX.value:
             reverse_operator = "not "
-        func = OPERATOR_TO_CLICKHOUSE_FUNC[expression.operator]
+        operator = OPERATOR_TO_STARROCKS_OPERATOR[expression.operator]
         field_name = expression.key.segments[0]
         if field_name not in fields:
             raise FlyqlError(f"unknown field: {field_name}")
@@ -114,39 +114,33 @@ def expression_to_sql(expression: Expression, fields: Mapping[str, Field]) -> st
                 expression.value, field.normalized_type, expression.operator
             )
 
-        if field.jsonstring:
-            json_path = expression.key.segments[1:]
-            json_path_str = ", ".join([escape_param(x) for x in json_path])
-
-            str_value = escape_param(expression.value)
-            multi_if = [
-                f"JSONType({field.name}, {json_path_str}) = 'String', {func}(JSONExtractString({field.name}, {json_path_str}), {str_value})"
-            ]
-            if is_number(expression.value) and expression.operator not in [
-                Operator.EQUALS_REGEX.value,
-                Operator.NOT_EQUALS_REGEX.value,
-            ]:
-                multi_if.extend(
-                    [
-                        f"JSONType({field.name}, {json_path_str}) = 'Int64', {func}(JSONExtractInt({field.name}, {json_path_str}), {expression.value})",
-                        f"JSONType({field.name}, {json_path_str}) = 'Double', {func}(JSONExtractFloat({field.name}, {json_path_str}), {expression.value})",
-                        f"JSONType({field.name}, {json_path_str}) = 'Bool', {func}(JSONExtractBool({field.name}, {json_path_str}), {expression.value})",
-                    ]
-                )
-            multi_if.append("0")
-            multi_if_str = ",".join(multi_if)
-            text = f"{reverse_operator}multiIf({multi_if_str})"
-        elif field.is_json:
+        # Although any column can be marked as jsonstring, and this can provide UI
+        # benefits in Telescope, we cannot actually cast Map and Array columns to JSON
+        # as we can in Clickhouse. Additionally, there is no benefit in casting a JSON
+        # column to JSON again. Therefore, we only do jsonstring parsing for other
+        # column types.
+        if field.is_json:
+            # Although `parse_json` works on a JSON field, it is more efficient to not use it
+            # when we know the field is already the JSON type.
             json_path = expression.key.segments[1:]
             for part in json_path:
                 validate_json_path_part(part)
-            json_path_str = ".".join(f"`{part}`" for part in json_path)
+            json_path_str = "->".join(f"'{part}'" for part in json_path)
             value = escape_param(expression.value)
-            text = f"{field.name}.{json_path_str} {expression.operator} {value}"
+
+            field_exp = f"`{field.name}`->{json_path_str}"
+
+            if (
+                expression.operator == Operator.EQUALS_REGEX.value
+                or expression.operator == Operator.NOT_EQUALS_REGEX.value
+            ):
+                field_exp = f"cast({field_exp} as string)"
+            text = f"{field_exp} {reverse_operator}{operator} {value}"
         elif field.is_map:
-            map_key = ":".join(expression.key.segments[1:])
+            map_path = expression.key.segments[1:]
+            map_key = "']['".join(map_path)
             value = escape_param(expression.value)
-            text = f"{reverse_operator}{func}({field.name}['{map_key}'], {value})"
+            text = f"`{field.name}`['{map_key}'] {reverse_operator}{operator} {value}"
         elif field.is_array:
             array_index_str = ":".join(expression.key.segments[1:])
             try:
@@ -156,7 +150,14 @@ def expression_to_sql(expression: Expression, fields: Mapping[str, Field]) -> st
                     f"invalid array index, expected number: {array_index_str}"
                 )
             value = escape_param(expression.value)
-            text = f"{reverse_operator}{func}({field.name}[{array_index}], {value})"
+            text = f"`{field.name}`[{array_index}] {reverse_operator}{operator} {value}"
+        elif field.jsonstring:
+            json_path = expression.key.segments[1:]
+            for part in json_path:
+                validate_json_path_part(part)
+            json_path_str = "->".join(f"'{part}'" for part in json_path)
+            value = escape_param(expression.value)
+            text = f"parse_json(`{field.name}`)->{json_path_str} {reverse_operator}{operator} {value}"
         else:
             raise FlyqlError("path search for unsupported field type")
 
@@ -202,7 +203,7 @@ def expression_to_sql(expression: Expression, fields: Mapping[str, Field]) -> st
 
 def to_sql(root: Node, fields: Mapping[str, Field]) -> str:
     """
-    Returns ClickHouse WHERE clause for given tree and fields
+    Returns Starrocks WHERE clause for given tree and fields
     """
     left = ""
     right = ""

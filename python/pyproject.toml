@@ -34,7 +34,7 @@ Repository = "https://github.com/iamtelescope/flyql.git"
 Issues = "https://github.com/iamtelescope/flyql/issues"
 Documentation = "https://github.com/iamtelescope/flyql#readme"
 
-[project.optional-dependencies]
+[dependency-groups]
 test = [
     "pytest>=8.4",
     "black>=25.1",

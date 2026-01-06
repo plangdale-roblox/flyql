@@ -1,10 +1,10 @@
-from typing import Union, Any, List, Optional
+from typing import Any, List, Optional
 from flyql.core.exceptions import FlyqlError
 from flyql.core.constants import VALID_KEY_VALUE_OPERATORS, Operator
 from flyql.core.key import Key
 
 
-def try_convert_to_number(value: str) -> Union[float, int, str]:
+def try_convert_to_number(value: str | int | float) -> str | int | float:
     try:
         f = float(value)
         if f.is_integer():
@@ -19,8 +19,8 @@ class Expression:
         self,
         key: Key,
         operator: str,
-        value: str,
-        value_is_string: Union[bool, None],
+        value: str | int | float,
+        value_is_string: bool | None,
         values: Optional[List[Any]] = None,
         values_type: Optional[str] = None,
     ) -> None:

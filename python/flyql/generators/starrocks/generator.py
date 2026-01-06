@@ -99,6 +99,7 @@ def prepare_like_pattern_value(value: str) -> Tuple[bool, str]:
 def expression_to_sql(expression: Expression, fields: Mapping[str, Field]) -> str:
     text = ""
 
+    # TODO: support arbitrary nesting for map, array, struct types
     if expression.key.is_segmented:
         reverse_operator = ""
         if expression.operator == Operator.NOT_EQUALS_REGEX.value:
@@ -151,6 +152,13 @@ def expression_to_sql(expression: Expression, fields: Mapping[str, Field]) -> st
                 )
             value = escape_param(expression.value)
             text = f"`{field.name}`[{array_index}] {reverse_operator}{operator} {value}"
+        elif field.is_struct:
+            struct_path = expression.key.segments[1:]
+            struct_field = "'.'".join(struct_path)
+            value = escape_param(expression.value)
+            text = (
+                f"`{field.name}`.'{struct_field}' {reverse_operator}{operator} {value}"
+            )
         elif field.jsonstring:
             json_path = expression.key.segments[1:]
             for part in json_path:

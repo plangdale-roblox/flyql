@@ -100,4 +100,5 @@ class Field:
         self.normalized_type = normalize_starrocks_type(_type)
         self.is_map = self.normalized_type == NORMALIZED_TYPE_MAP
         self.is_array = self.normalized_type == NORMALIZED_TYPE_ARRAY
+        self.is_struct = self.normalized_type == NORMALIZED_TYPE_STRUCT
         self.is_json = self.normalized_type == NORMALIZED_TYPE_JSON

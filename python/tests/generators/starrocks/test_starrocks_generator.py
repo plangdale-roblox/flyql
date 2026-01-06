@@ -26,6 +26,7 @@ def fields() -> dict[str, Field]:
         "new_json": Field("new_json", False, "JSON"),
         "tags": Field("tags", False, "Array<String>"),
         "metadata": Field("metadata", False, "Map<String, String>"),
+        "user_info": Field("user_info", False, "Struct<name:String,age:Int>"),
     }
 
 
@@ -321,6 +322,23 @@ class TestArrayFields:
         )
         with pytest.raises(FlyqlError, match="invalid array index"):
             expression_to_sql(expr, fields)
+
+
+class TestStructFields:
+
+    def test_struct_field_access(self, fields: dict[str, Field]) -> None:
+        expr = Expression(
+            parse_key("user_info:name"), Operator.EQUALS.value, "value1", True
+        )
+        result = expression_to_sql(expr, fields)
+        assert result == "`user_info`.'name' = 'value1'"
+
+    def test_struct_field_nested_key(self, fields: dict[str, Field]) -> None:
+        expr = Expression(
+            parse_key("user_info:nested:name"), Operator.EQUALS.value, "value", True
+        )
+        result = expression_to_sql(expr, fields)
+        assert result == "`user_info`.'nested'.'name' = 'value'"
 
 
 class TestTreeToSQL:

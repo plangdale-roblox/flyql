@@ -4,7 +4,7 @@ from flyql.core.expression import Expression
 from flyql.core.constants import Operator
 from flyql.core.tree import Node
 from flyql.core.key import parse_key
-from flyql.generators.starrocks.field import Field
+from flyql.generators.starrocks.column import Column
 from flyql.generators.starrocks.generator import (
     expression_to_sql,
     to_sql,
@@ -15,18 +15,18 @@ from flyql.generators.starrocks.generator import (
 
 
 @pytest.fixture
-def fields() -> dict[str, Field]:
+def fields() -> dict[str, Column]:
     return {
-        "message": Field("message", False, "String"),
-        "count": Field("count", False, "Largeint"),
-        "price": Field("price", False, "Float"),
-        "active": Field("active", False, "Bool"),
-        "created_at": Field("created_at", False, "DateTime"),
-        "json_field": Field("json_field", True, "String"),
-        "new_json": Field("new_json", False, "JSON"),
-        "tags": Field("tags", False, "Array<String>"),
-        "metadata": Field("metadata", False, "Map<String, String>"),
-        "user_info": Field("user_info", False, "Struct<name:String,age:Int>"),
+        "message": Column("message", False, "String"),
+        "count": Column("count", False, "Largeint"),
+        "price": Column("price", False, "Float"),
+        "active": Column("active", False, "Bool"),
+        "created_at": Column("created_at", False, "DateTime"),
+        "json_field": Column("json_field", True, "String"),
+        "new_json": Column("new_json", False, "JSON"),
+        "tags": Column("tags", False, "Array<String>"),
+        "metadata": Column("metadata", False, "Map<String, String>"),
+        "user_info": Column("user_info", False, "Struct<name:String,age:Int>"),
     }
 
 
@@ -97,133 +97,126 @@ class TestPrepareLikePattern:
 
 class TestExpressionToSQL:
 
-    def test_string_equals(self, fields: dict[str, Field]) -> None:
+    def test_string_equals(self, fields: dict[str, Column]) -> None:
         expr = Expression(parse_key("message"), Operator.EQUALS.value, "hello", True)
         result = expression_to_sql(expr, fields)
         assert result == "`message` = 'hello'"
 
-    def test_string_not_equals(self, fields: dict[str, Field]) -> None:
+    def test_string_not_equals(self, fields: dict[str, Column]) -> None:
         expr = Expression(
             parse_key("message"), Operator.NOT_EQUALS.value, "hello", True
         )
         result = expression_to_sql(expr, fields)
         assert result == "`message` != 'hello'"
 
-    def test_string_regex(self, fields: dict[str, Field]) -> None:
+    def test_string_regex(self, fields: dict[str, Column]) -> None:
         expr = Expression(
-            parse_key("message"), Operator.EQUALS_REGEX.value, "test.*", True
+            parse_key("message"), Operator.REGEX.value, "test.*", True
         )
         result = expression_to_sql(expr, fields)
         assert result == "regexp(`message`, 'test.*')"
 
-    def test_string_not_regex(self, fields: dict[str, Field]) -> None:
+    def test_string_not_regex(self, fields: dict[str, Column]) -> None:
         expr = Expression(
-            parse_key("message"), Operator.NOT_EQUALS_REGEX.value, "test.*", True
+            parse_key("message"), Operator.NOT_REGEX.value, "test.*", True
         )
         result = expression_to_sql(expr, fields)
         assert result == "not regexp(`message`, 'test.*')"
 
-    def test_int_comparison(self, fields: dict[str, Field]) -> None:
+    def test_int_comparison(self, fields: dict[str, Column]) -> None:
         expr = Expression(parse_key("count"), Operator.GREATER_THAN.value, 10, False)
         result = expression_to_sql(expr, fields)
         assert result == "`count` > 10"
 
-    def test_float_comparison(self, fields: dict[str, Field]) -> None:
+    def test_float_comparison(self, fields: dict[str, Column]) -> None:
         expr = Expression(parse_key("price"), Operator.LOWER_THAN.value, 99.99, False)
         result = expression_to_sql(expr, fields)
         assert result == "`price` < 99.99"
 
-    def test_bool_equals(self, fields: dict[str, Field]) -> None:
+    def test_bool_equals(self, fields: dict[str, Column]) -> None:
         expr = Expression(parse_key("active"), Operator.EQUALS.value, True, False)
         result = expression_to_sql(expr, fields)
         assert result == "`active` = '1'"
 
-    def test_like_pattern(self, fields: dict[str, Field]) -> None:
+    def test_like_pattern(self, fields: dict[str, Column]) -> None:
         expr = Expression(parse_key("message"), Operator.EQUALS.value, "hello*", True)
         result = expression_to_sql(expr, fields)
         assert result == "`message` LIKE 'hello%'"
 
-    def test_not_like_pattern(self, fields: dict[str, Field]) -> None:
+    def test_not_like_pattern(self, fields: dict[str, Column]) -> None:
         expr = Expression(
             parse_key("message"), Operator.NOT_EQUALS.value, "hello*", True
         )
         result = expression_to_sql(expr, fields)
         assert result == "`message` NOT LIKE 'hello%'"
 
-    def test_unknown_field(self, fields: dict[str, Field]) -> None:
+    def test_unknown_field(self, fields: dict[str, Column]) -> None:
         expr = Expression(
             parse_key("unknown_field"), Operator.EQUALS.value, "test", True
         )
-        with pytest.raises(FlyqlError, match="unknown field"):
+        with pytest.raises(FlyqlError, match="unknown column"):
             expression_to_sql(expr, fields)
 
-    def test_forbidden_operation(self, fields: dict[str, Field]) -> None:
-        expr = Expression(parse_key("count"), Operator.EQUALS_REGEX.value, "test", True)
+    def test_forbidden_operation(self, fields: dict[str, Column]) -> None:
+        expr = Expression(parse_key("count"), Operator.REGEX.value, "test", True)
         with pytest.raises(FlyqlError, match="operation not allowed"):
             sql = expression_to_sql(expr, fields)
             print(sql)
 
 
-class TestNewJSONFields:
+class TestNewJSONColumns:
 
-    def test_json_field_simple_path(self, fields: dict[str, Field]) -> None:
+    def test_json_field_simple_path(self, fields: dict[str, Column]) -> None:
         expr = Expression(
-            parse_key("new_json:name"), Operator.EQUALS.value, "test", True
+            parse_key("new_json.name"), Operator.EQUALS.value, "test", True
         )
         result = expression_to_sql(expr, fields)
         expected = "`new_json`->'name' = 'test'"
         assert result == expected
 
-    def test_json_field_nested_path(self, fields: dict[str, Field]) -> None:
+    def test_json_field_nested_path(self, fields: dict[str, Column]) -> None:
         expr = Expression(
-            parse_key("new_json:user:name"), Operator.EQUALS.value, "john", True
+            parse_key("new_json.user.name"), Operator.EQUALS.value, "john", True
         )
         result = expression_to_sql(expr, fields)
         expected = "`new_json`->'user'->'name' = 'john'"
         assert result == expected
 
-    def test_json_field_number_value(self, fields: dict[str, Field]) -> None:
-        expr = Expression(parse_key("new_json:age"), Operator.EQUALS.value, 25, False)
+    def test_json_field_number_value(self, fields: dict[str, Column]) -> None:
+        expr = Expression(parse_key("new_json.age"), Operator.EQUALS.value, 25, False)
         result = expression_to_sql(expr, fields)
         expected = "`new_json`->'age' = 25"
         assert result == expected
 
-    def test_json_field_underscore_in_name(self, fields: dict[str, Field]) -> None:
+    def test_json_field_underscore_in_name(self, fields: dict[str, Column]) -> None:
         expr = Expression(
-            parse_key("new_json:field_name"), Operator.EQUALS.value, "test", True
+            parse_key("new_json.field_name"), Operator.EQUALS.value, "test", True
         )
         result = expression_to_sql(expr, fields)
         assert result == "`new_json`->'field_name' = 'test'"
 
-    def test_json_field_hyphen_in_name(self, fields: dict[str, Field]) -> None:
+    def test_json_field_hyphen_in_name(self, fields: dict[str, Column]) -> None:
         expr = Expression(
-            parse_key("new_json:field-name"), Operator.EQUALS.value, "test", True
+            parse_key("new_json.field-name"), Operator.EQUALS.value, "test", True
         )
         result = expression_to_sql(expr, fields)
         assert result == "`new_json`->'field-name' = 'test'"
 
-    def test_json_field_with_dots(self, fields: dict[str, Field]) -> None:
-        expr = Expression(
-            parse_key("new_json:field.subfield"), Operator.EQUALS.value, "test", True
-        )
-        result = expression_to_sql(expr, fields)
-        assert result == "`new_json`->'field.subfield' = 'test'"
-
     def test_json_field_starting_with_underscore(
-        self, fields: dict[str, Field]
+        self, fields: dict[str, Column]
     ) -> None:
         expr = Expression(
-            parse_key("new_json:_private"), Operator.EQUALS.value, "test", True
+            parse_key("new_json._private"), Operator.EQUALS.value, "test", True
         )
         result = expression_to_sql(expr, fields)
         assert result == "`new_json`->'_private' = 'test'"
 
 
-class TestJSONFieldValidationErrors:
+class TestJSONColumnValidationErrors:
 
-    def test_json_field_with_quotes(self, fields: dict[str, Field]) -> None:
+    def test_json_field_with_quotes(self, fields: dict[str, Column]) -> None:
         expr = Expression(
-            parse_key("new_json:'field\"with\"quotes'"),
+            parse_key("new_json.'field\"with\"quotes'"),
             Operator.EQUALS.value,
             "test",
             True,
@@ -231,111 +224,111 @@ class TestJSONFieldValidationErrors:
         with pytest.raises(FlyqlError, match="Invalid JSON path part"):
             expression_to_sql(expr, fields)
 
-    def test_json_field_with_spaces(self, fields: dict[str, Field]) -> None:
+    def test_json_field_with_spaces(self, fields: dict[str, Column]) -> None:
         expr = Expression(
-            parse_key("new_json:field with spaces"), Operator.EQUALS.value, "test", True
+            parse_key("new_json.field with spaces"), Operator.EQUALS.value, "test", True
         )
         with pytest.raises(FlyqlError, match="Invalid JSON path part"):
             expression_to_sql(expr, fields)
 
-    def test_json_field_with_special_chars(self, fields: dict[str, Field]) -> None:
+    def test_json_field_with_special_chars(self, fields: dict[str, Column]) -> None:
         expr = Expression(
-            parse_key("new_json:field@special"), Operator.EQUALS.value, "test", True
+            parse_key("new_json.field@special"), Operator.EQUALS.value, "test", True
         )
         with pytest.raises(FlyqlError, match="Invalid JSON path part"):
             expression_to_sql(expr, fields)
 
-    def test_json_field_starting_with_digit(self, fields: dict[str, Field]) -> None:
+    def test_json_field_starting_with_digit(self, fields: dict[str, Column]) -> None:
         expr = Expression(
-            parse_key("new_json:123field"), Operator.EQUALS.value, "test", True
+            parse_key("new_json.123field"), Operator.EQUALS.value, "test", True
         )
         with pytest.raises(FlyqlError, match="Invalid JSON path part"):
             expression_to_sql(expr, fields)
 
-    def test_json_field_starting_with_hyphen(self, fields: dict[str, Field]) -> None:
+    def test_json_field_starting_with_hyphen(self, fields: dict[str, Column]) -> None:
         expr = Expression(
-            parse_key("new_json:-invalid"), Operator.EQUALS.value, "test", True
+            parse_key("new_json.-invalid"), Operator.EQUALS.value, "test", True
         )
         with pytest.raises(FlyqlError, match="Invalid JSON path part"):
             expression_to_sql(expr, fields)
 
-    def test_json_field_empty_path_part(self, fields: dict[str, Field]) -> None:
+    def test_json_field_empty_path_part(self, fields: dict[str, Column]) -> None:
         expr = Expression(
-            parse_key("new_json:user::field"), Operator.EQUALS.value, "test", True
+            parse_key("new_json.user..field"), Operator.EQUALS.value, "test", True
         )
         with pytest.raises(FlyqlError, match="Invalid JSON path part"):
             expression_to_sql(expr, fields)
 
 
-class TestJSONFields:
+class TestJSONColumns:
 
-    def test_json_field_string_extraction(self, fields: dict[str, Field]) -> None:
+    def test_json_field_string_extraction(self, fields: dict[str, Column]) -> None:
         expr = Expression(
-            parse_key("json_field:name"), Operator.EQUALS.value, "test", True
+            parse_key("json_field.name"), Operator.EQUALS.value, "test", True
         )
         result = expression_to_sql(expr, fields)
         expected = "parse_json(`json_field`)->'name' = 'test'"
         assert result == expected
 
-    def test_json_field_nested_path(self, fields: dict[str, Field]) -> None:
+    def test_json_field_nested_path(self, fields: dict[str, Column]) -> None:
         expr = Expression(
-            parse_key("json_field:user:name"), Operator.EQUALS.value, "john", True
+            parse_key("json_field.user.name"), Operator.EQUALS.value, "john", True
         )
         result = expression_to_sql(expr, fields)
         expected = "parse_json(`json_field`)->'user'->'name' = 'john'"
         assert result == expected
 
-    def test_json_field_number_value(self, fields: dict[str, Field]) -> None:
-        expr = Expression(parse_key("json_field:age"), Operator.EQUALS.value, 25, False)
+    def test_json_field_number_value(self, fields: dict[str, Column]) -> None:
+        expr = Expression(parse_key("json_field.age"), Operator.EQUALS.value, 25, False)
         result = expression_to_sql(expr, fields)
         expected = "parse_json(`json_field`)->'age' = 25"
         assert result == expected
 
 
-class TestMapFields:
+class TestMapColumns:
 
-    def test_map_field_access(self, fields: dict[str, Field]) -> None:
+    def test_map_field_access(self, fields: dict[str, Column]) -> None:
         expr = Expression(
-            parse_key("metadata:key1"), Operator.EQUALS.value, "value1", True
+            parse_key("metadata.key1"), Operator.EQUALS.value, "value1", True
         )
         result = expression_to_sql(expr, fields)
         assert result == "`metadata`['key1'] = 'value1'"
 
-    def test_map_field_nested_key(self, fields: dict[str, Field]) -> None:
+    def test_map_field_nested_key(self, fields: dict[str, Column]) -> None:
         expr = Expression(
-            parse_key("metadata:nested:key"), Operator.EQUALS.value, "value", True
+            parse_key("metadata.nested.key"), Operator.EQUALS.value, "value", True
         )
         result = expression_to_sql(expr, fields)
         assert result == "`metadata`['nested']['key'] = 'value'"
 
 
-class TestArrayFields:
+class TestArrayColumns:
 
-    def test_array_field_access(self, fields: dict[str, Field]) -> None:
-        expr = Expression(parse_key("tags:0"), Operator.EQUALS.value, "tag1", True)
+    def test_array_field_access(self, fields: dict[str, Column]) -> None:
+        expr = Expression(parse_key("tags.0"), Operator.EQUALS.value, "tag1", True)
         result = expression_to_sql(expr, fields)
         assert result == "`tags`[0] = 'tag1'"
 
-    def test_array_field_invalid_index(self, fields: dict[str, Field]) -> None:
+    def test_array_field_invalid_index(self, fields: dict[str, Column]) -> None:
         expr = Expression(
-            parse_key("tags:invalid"), Operator.EQUALS.value, "tag1", True
+            parse_key("tags.invalid"), Operator.EQUALS.value, "tag1", True
         )
         with pytest.raises(FlyqlError, match="invalid array index"):
             expression_to_sql(expr, fields)
 
 
-class TestStructFields:
+class TestStructColumns:
 
-    def test_struct_field_access(self, fields: dict[str, Field]) -> None:
+    def test_struct_field_access(self, fields: dict[str, Column]) -> None:
         expr = Expression(
-            parse_key("user_info:name"), Operator.EQUALS.value, "value1", True
+            parse_key("user_info.name"), Operator.EQUALS.value, "value1", True
         )
         result = expression_to_sql(expr, fields)
         assert result == "`user_info`.'name' = 'value1'"
 
-    def test_struct_field_nested_key(self, fields: dict[str, Field]) -> None:
+    def test_struct_field_nested_key(self, fields: dict[str, Column]) -> None:
         expr = Expression(
-            parse_key("user_info:nested:name"), Operator.EQUALS.value, "value", True
+            parse_key("user_info.nested.name"), Operator.EQUALS.value, "value", True
         )
         result = expression_to_sql(expr, fields)
         assert result == "`user_info`.'nested'.'name' = 'value'"
@@ -343,13 +336,13 @@ class TestStructFields:
 
 class TestTreeToSQL:
 
-    def test_simple_expression(self, fields: dict[str, Field]) -> None:
+    def test_simple_expression(self, fields: dict[str, Column]) -> None:
         expr = Expression(parse_key("message"), Operator.EQUALS.value, "hello", True)
         node = Node("", expr, None, None)
         result = to_sql(node, fields)
         assert result == "`message` = 'hello'"
 
-    def test_and_operation(self, fields: dict[str, Field]) -> None:
+    def test_and_operation(self, fields: dict[str, Column]) -> None:
         left_expr = Expression(
             parse_key("message"), Operator.EQUALS.value, "hello", True
         )
@@ -364,7 +357,7 @@ class TestTreeToSQL:
         result = to_sql(root_node, fields)
         assert result == "(`message` = 'hello' and `count` > 10)"
 
-    def test_or_operation(self, fields: dict[str, Field]) -> None:
+    def test_or_operation(self, fields: dict[str, Column]) -> None:
         left_expr = Expression(
             parse_key("message"), Operator.EQUALS.value, "hello", True
         )
@@ -379,7 +372,7 @@ class TestTreeToSQL:
         result = to_sql(root_node, fields)
         assert result == "(`message` = 'hello' or `message` = 'world')"
 
-    def test_complex_tree(self, fields: dict[str, Field]) -> None:
+    def test_complex_tree(self, fields: dict[str, Column]) -> None:
         expr1 = Expression(parse_key("message"), Operator.EQUALS.value, "hello", True)
         expr2 = Expression(parse_key("count"), Operator.GREATER_THAN.value, 10, False)
         expr3 = Expression(parse_key("active"), Operator.EQUALS.value, True, False)
@@ -418,7 +411,7 @@ class TestTreeToSQL:
     ],
 )
 def test_various_field_operations(
-    fields: dict[str, Field],
+    fields: dict[str, Column],
     field_name: str,
     operator: str,
     value: str,

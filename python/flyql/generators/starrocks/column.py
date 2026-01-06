@@ -85,7 +85,7 @@ def normalize_starrocks_type(sr_type: str) -> Optional[str]:
     return None
 
 
-class Field:
+class Column:
     def __init__(
         self,
         name: str,

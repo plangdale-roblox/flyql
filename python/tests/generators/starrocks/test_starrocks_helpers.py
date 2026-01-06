@@ -27,11 +27,11 @@ def test_get_value_type(value: Any, expected: str) -> None:
     "value,field_normalized_type,operator",
     [
         ("hello", "string", Operator.EQUALS.value),
-        ("hello", "string", Operator.EQUALS_REGEX.value),
+        ("hello", "string", Operator.REGEX.value),
         (123, "int", Operator.GREATER_THAN.value),
         (12.34, "float", Operator.LOWER_THAN.value),
         (True, "bool", Operator.EQUALS.value),
-        ("test", "string", Operator.NOT_EQUALS_REGEX.value),
+        ("test", "string", Operator.NOT_REGEX.value),
         (42, "int", Operator.EQUALS.value),
         (3.14, "float", Operator.EQUALS.value),
     ],
@@ -51,8 +51,8 @@ def test_validate_operation_allowed(
         (10, "string", Operator.GREATER_OR_EQUALS_THAN.value),
         (5.5, "string", Operator.LOWER_OR_EQUALS_THAN.value),
         # Numbers with regex
-        ("test", "int", Operator.EQUALS_REGEX.value),
-        ("pattern", "float", Operator.NOT_EQUALS_REGEX.value),
+        ("test", "int", Operator.REGEX.value),
+        ("pattern", "float", Operator.NOT_REGEX.value),
         # Bool with comparison
         (True, "bool", Operator.GREATER_THAN.value),
         (False, "bool", Operator.LOWER_THAN.value),

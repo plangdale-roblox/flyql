@@ -6,14 +6,14 @@ from flyql.core.expression import Expression
 from flyql.core.constants import Operator
 from flyql.core.tree import Node
 
-from flyql.generators.starrocks.field import Field
+from flyql.generators.starrocks.column import Column
 from flyql.generators.starrocks.helpers import validate_operation
 
 OPERATOR_TO_STARROCKS_OPERATOR = {
     Operator.EQUALS.value: "=",
     Operator.NOT_EQUALS.value: "!=",
-    Operator.EQUALS_REGEX.value: "regexp",
-    Operator.NOT_EQUALS_REGEX.value: "regexp",
+    Operator.REGEX.value: "regexp",
+    Operator.NOT_REGEX.value: "regexp",
     Operator.GREATER_THAN.value: ">",
     Operator.LOWER_THAN.value: "<",
     Operator.GREATER_OR_EQUALS_THAN.value: ">=",
@@ -96,23 +96,23 @@ def prepare_like_pattern_value(value: str) -> Tuple[bool, str]:
     return pattern_found, new_value
 
 
-def expression_to_sql(expression: Expression, fields: Mapping[str, Field]) -> str:
+def expression_to_sql(expression: Expression, columns: Mapping[str, Column]) -> str:
     text = ""
 
     # TODO: support arbitrary nesting for map, array, struct types
     if expression.key.is_segmented:
         reverse_operator = ""
-        if expression.operator == Operator.NOT_EQUALS_REGEX.value:
+        if expression.operator == Operator.NOT_REGEX.value:
             reverse_operator = "not "
         operator = OPERATOR_TO_STARROCKS_OPERATOR[expression.operator]
-        field_name = expression.key.segments[0]
-        if field_name not in fields:
-            raise FlyqlError(f"unknown field: {field_name}")
-        field = fields[field_name]
+        column_name = expression.key.segments[0]
+        if column_name not in columns:
+            raise FlyqlError(f"unknown column: {column_name}")
+        column = columns[column_name]
 
-        if field.normalized_type is not None:
+        if column.normalized_type is not None:
             validate_operation(
-                expression.value, field.normalized_type, expression.operator
+                expression.value, column.normalized_type, expression.operator
             )
 
         # Although any column can be marked as jsonstring, and this can provide UI
@@ -120,9 +120,9 @@ def expression_to_sql(expression: Expression, fields: Mapping[str, Field]) -> st
         # as we can in Clickhouse. Additionally, there is no benefit in casting a JSON
         # column to JSON again. Therefore, we only do jsonstring parsing for other
         # column types.
-        if field.is_json:
-            # Although `parse_json` works on a JSON field, it is more efficient to not use it
-            # when we know the field is already the JSON type.
+        if column.is_json:
+            # Although `parse_json` works on a JSON column, it is more efficient to not use it
+            # when we know the column is already the JSON type.
             json_path = expression.key.segments[1:]
             for part in json_path:
                 validate_json_path_part(part)
@@ -131,20 +131,20 @@ def expression_to_sql(expression: Expression, fields: Mapping[str, Field]) -> st
             )
             value = escape_param(expression.value)
 
-            field_exp = f"`{field.name}`->{json_path_str}"
+            column_exp = f"`{column.name}`->{json_path_str}"
 
             if (
-                expression.operator == Operator.EQUALS_REGEX.value
-                or expression.operator == Operator.NOT_EQUALS_REGEX.value
+                expression.operator == Operator.REGEX.value
+                or expression.operator == Operator.NOT_REGEX.value
             ):
-                field_exp = f"cast({field_exp} as string)"
-            text = f"{field_exp} {reverse_operator}{operator} {value}"
-        elif field.is_map:
+                column_exp = f"cast({column_exp} as string)"
+            text = f"{column_exp} {reverse_operator}{operator} {value}"
+        elif column.is_map:
             map_path = expression.key.segments[1:]
             map_key = "']['".join(map_path)
             value = escape_param(expression.value)
-            text = f"`{field.name}`['{map_key}'] {reverse_operator}{operator} {value}"
-        elif field.is_array:
+            text = f"`{column.name}`['{map_key}'] {reverse_operator}{operator} {value}"
+        elif column.is_array:
             array_index_str = ":".join(expression.key.segments[1:])
             try:
                 array_index = int(array_index_str)
@@ -153,45 +153,45 @@ def expression_to_sql(expression: Expression, fields: Mapping[str, Field]) -> st
                     f"invalid array index, expected number: {array_index_str}"
                 )
             value = escape_param(expression.value)
-            text = f"`{field.name}`[{array_index}] {reverse_operator}{operator} {value}"
-        elif field.is_struct:
-            struct_path = expression.key.segments[1:]
-            struct_field = "'.'".join(struct_path)
-            value = escape_param(expression.value)
             text = (
-                f"`{field.name}`.'{struct_field}' {reverse_operator}{operator} {value}"
+                f"`{column.name}`[{array_index}] {reverse_operator}{operator} {value}"
             )
-        elif field.jsonstring:
+        elif column.is_struct:
+            struct_path = expression.key.segments[1:]
+            struct_column = "'.'".join(struct_path)
+            value = escape_param(expression.value)
+            text = f"`{column.name}`.'{struct_column}' {reverse_operator}{operator} {value}"
+        elif column.jsonstring:
             json_path = expression.key.segments[1:]
             for part in json_path:
                 validate_json_path_part(part)
             json_path_str = "->".join(f"'{part}'" for part in json_path)
             value = escape_param(expression.value)
-            text = f"parse_json(`{field.name}`)->{json_path_str} {reverse_operator}{operator} {value}"
+            text = f"parse_json(`{column.name}`)->{json_path_str} {reverse_operator}{operator} {value}"
         else:
-            raise FlyqlError("path search for unsupported field type")
+            raise FlyqlError("path search for unsupported column type")
 
     else:
-        field_name = expression.key.segments[0]
-        if field_name not in fields:
-            raise FlyqlError(f"unknown field: {field_name}")
+        column_name = expression.key.segments[0]
+        if column_name not in columns:
+            raise FlyqlError(f"unknown column: {column_name}")
 
-        field = fields[field_name]
+        column = columns[column_name]
 
-        if field.values and str(expression.value) not in field.values:
+        if column.values and str(expression.value) not in column.values:
             raise FlyqlError(f"unknown value: {expression.value}")
 
-        if field.normalized_type is not None:
+        if column.normalized_type is not None:
             validate_operation(
-                expression.value, field.normalized_type, expression.operator
+                expression.value, column.normalized_type, expression.operator
             )
 
-        if expression.operator == Operator.EQUALS_REGEX.value:
+        if expression.operator == Operator.REGEX.value:
             value = escape_param(str(expression.value))
-            text = f"regexp(`{field.name}`, {value})"
-        elif expression.operator == Operator.NOT_EQUALS_REGEX.value:
+            text = f"regexp(`{column.name}`, {value})"
+        elif expression.operator == Operator.NOT_REGEX.value:
             value = escape_param(str(expression.value))
-            text = f"not regexp(`{field.name}`, {value})"
+            text = f"not regexp(`{column.name}`, {value})"
         elif expression.operator in [Operator.EQUALS.value, Operator.NOT_EQUALS.value]:
             operator = expression.operator
             is_like_pattern, value = prepare_like_pattern_value(str(expression.value))
@@ -201,32 +201,32 @@ def expression_to_sql(expression: Expression, fields: Mapping[str, Field]) -> st
                     operator = "LIKE"
                 else:
                     operator = "NOT LIKE"
-            text = f"`{field.name}` {operator} {value}"
+            text = f"`{column.name}` {operator} {value}"
         else:
             if isinstance(expression.value, (int, float)):
                 value = str(expression.value)
             else:
                 value = escape_param(str(expression.value))
-            text = f"`{field.name}` {expression.operator} {value}"
+            text = f"`{column.name}` {expression.operator} {value}"
     return text
 
 
-def to_sql(root: Node, fields: Mapping[str, Field]) -> str:
+def to_sql(root: Node, columns: Mapping[str, Column]) -> str:
     """
-    Returns Starrocks WHERE clause for given tree and fields
+    Returns Starrocks WHERE clause for given tree and columns
     """
     left = ""
     right = ""
     text = ""
 
     if root.expression is not None:
-        text = expression_to_sql(expression=root.expression, fields=fields)
+        text = expression_to_sql(expression=root.expression, columns=columns)
 
     if root.left is not None:
-        left = to_sql(root=root.left, fields=fields)
+        left = to_sql(root=root.left, columns=columns)
 
     if root.right is not None:
-        right = to_sql(root=root.right, fields=fields)
+        right = to_sql(root=root.right, columns=columns)
 
     if len(left) > 0 and len(right) > 0:
         text = f"({left} {root.bool_operator} {right})"

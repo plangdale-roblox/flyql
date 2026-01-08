@@ -3,11 +3,26 @@ from typing import Mapping, Tuple, Any
 
 from flyql.core.exceptions import FlyqlError
 from flyql.core.expression import Expression
-from flyql.core.constants import Operator
+from flyql.core.constants import (
+    Operator,
+    VALID_KEY_VALUE_OPERATORS,
+    VALID_BOOL_OPERATORS,
+)
 from flyql.core.tree import Node
 
 from flyql.generators.starrocks.column import Column
-from flyql.generators.starrocks.helpers import validate_operation
+from flyql.generators.starrocks.helpers import (
+    validate_operation,
+    validate_in_list_types,
+)
+from flyql.generators.starrocks.constants import (
+    NORMALIZED_TYPE_STRING,
+    NORMALIZED_TYPE_INT,
+    NORMALIZED_TYPE_FLOAT,
+    NORMALIZED_TYPE_BOOL,
+    NORMALIZED_TYPE_DATE,
+)
+
 
 OPERATOR_TO_STARROCKS_OPERATOR = {
     Operator.EQUALS.value: "=",
@@ -43,6 +58,16 @@ def validate_json_path_part(part: str) -> None:
         raise FlyqlError("Invalid JSON path part")
     if not JSON_KEY_PATTERN.match(part):
         raise FlyqlError("Invalid JSON path part")
+
+
+def validate_operator(op: str) -> None:
+    if op not in VALID_KEY_VALUE_OPERATORS:
+        raise FlyqlError(f"invalid operator: {op}")
+
+
+def validate_bool_operator(op: str) -> None:
+    if op not in VALID_BOOL_OPERATORS:
+        raise FlyqlError(f"invalid bool operator: {op}")
 
 
 def escape_param(item: Any) -> str:
@@ -96,7 +121,211 @@ def prepare_like_pattern_value(value: str) -> Tuple[bool, str]:
     return pattern_found, new_value
 
 
+def truthy_expression_to_sql(
+    expression: Expression, columns: Mapping[str, Column]
+) -> str:
+    """Generate SQL for truthy check (non-falsy value).
+
+    Type-aware truthy checks:
+    - String: column IS NOT NULL AND column != ''
+    - Int/Float: column IS NOT NULL AND column != 0
+    - Bool: column (ClickHouse supports boolean expressions directly)
+    - Date: column IS NOT NULL
+    """
+    column_name = expression.key.segments[0]
+    if column_name not in columns:
+        raise FlyqlError(f"unknown column: {column_name}")
+
+    column = columns[column_name]
+
+    if expression.key.is_segmented:
+        if column.is_json:
+            json_path = expression.key.segments[1:]
+            for part in json_path:
+                validate_json_path_part(part)
+            json_path_str = "->".join(
+                f"'{part.replace(".", "\\\\.")}'" for part in json_path
+            )
+            return f"(`{column.name}`->{json_path_str} IS NOT NULL)"
+        elif column.is_map:
+            map_key = ".".join(expression.key.segments[1:])
+            escaped_map_key = escape_param(map_key)
+            return (
+                f"(element_at(`{column.name}`, {escaped_map_key}) IS NOT NULL AND "
+                f"`{column.name}`[{escaped_map_key}] != '')"
+            )
+        elif column.is_array:
+            array_index_str = ".".join(expression.key.segments[1:])
+            try:
+                array_index = int(array_index_str)
+            except Exception as err:
+                raise FlyqlError(
+                    f"invalid array index, expected number: {array_index_str}"
+                ) from err
+            return (
+                f"(array_length(`{column.name}`) >= {array_index} AND "
+                f"`{column.name}`[{array_index}] != '')"
+            )
+        elif column.jsonstring:
+            json_path = expression.key.segments[1:]
+            json_path_str = "->".join(
+                f"'{part.replace(".", "\\\\.")}'" for part in json_path
+            )
+            return (
+                f"(json_exists(parse_json(`{column.name}`), {json_path_str}) AND "
+                f"parse_json(`{column.name}`)->{json_path_str} != '')"
+            )
+        else:
+            raise FlyqlError("path search for unsupported column type")
+    else:
+        if column.jsonstring:
+            return (
+                f"(`{column.name}` IS NOT NULL AND `{column.name}` != '' AND "
+                f"json_length(`{column.name}`) > 0)"
+            )
+        elif column.normalized_type == NORMALIZED_TYPE_BOOL:
+            return f"`{column.name}`"
+        elif column.normalized_type == NORMALIZED_TYPE_STRING:
+            return f"(`{column.name}` IS NOT NULL AND `{column.name}` != '')"
+        elif column.normalized_type in (NORMALIZED_TYPE_INT, NORMALIZED_TYPE_FLOAT):
+            return f"(`{column.name}` IS NOT NULL AND `{column.name}` != 0)"
+        elif column.normalized_type == NORMALIZED_TYPE_DATE:
+            return f"(`{column.name}` IS NOT NULL)"
+        else:
+            return f"(`{column.name}` IS NOT NULL)"
+
+def falsy_expression_to_sql(
+    expression: Expression, columns: Mapping[str, Column]
+) -> str:
+    """Generate SQL for falsy check (null or falsy value).
+
+    Type-aware falsy checks (negation of truthy):
+    - String: column IS NULL OR column = ''
+    - Int/Float: column IS NULL OR column = 0
+    - Bool: NOT column (handles NULL correctly in ClickHouse)
+    - Date: column IS NULL
+    """
+    column_name = expression.key.segments[0]
+    if column_name not in columns:
+        raise FlyqlError(f"unknown column: {column_name}")
+
+    column = columns[column_name]
+
+    if expression.key.is_segmented:
+        if column.is_json:
+            json_path = expression.key.segments[1:]
+            for part in json_path:
+                validate_json_path_part(part)
+            json_path_str = "->".join(
+                f"'{part.replace(".", "\\\\.")}'" for part in json_path
+            )
+            return f"(`{column.name}`->{json_path_str} IS NULL)"
+        elif column.is_map:
+            map_key = ".".join(expression.key.segments[1:])
+            escaped_map_key = escape_param(map_key)
+            return (
+                f"(element_at(`{column.name}`, '{escaped_map_key}') IS NULL OR "
+                f"`{column.name}`['{escaped_map_key}'] = '')"
+            )
+        elif column.is_array:
+            array_index_str = ".".join(expression.key.segments[1:])
+            try:
+                array_index = int(array_index_str)
+            except Exception as err:
+                raise FlyqlError(
+                    f"invalid array index, expected number: {array_index_str}"
+                ) from err
+            return (
+                f"(array_length(`{column.name}`) < {array_index} OR "
+                f"`{column.name}`[{array_index}] = '')"
+            )
+        elif column.jsonstring:
+            json_path = expression.key.segments[1:]
+            json_path_str = "->".join(
+                f"'{part.replace(".", "\\\\.")}'" for part in json_path
+            )
+            return (
+                f"(NOT json_exists(parse_json(`{column.name}`), '$.{json_path_str}') OR "
+                f"parse_json(`{column.name}`)->{json_path_str} = '')"
+            )
+        else:
+            raise FlyqlError("path search for unsupported column type")
+    else:
+        if column.jsonstring:
+            return (
+                f"(`{column.name}` IS NULL OR `{column.name}` = '' OR "
+                f"json_length(`{column.name}`) = 0)"
+            )
+        elif column.normalized_type == NORMALIZED_TYPE_BOOL:
+            return f"NOT `{column.name}`"
+        elif column.normalized_type == NORMALIZED_TYPE_STRING:
+            return f"(`{column.name}` IS NULL OR `{column.name}` = '')"
+        elif column.normalized_type in (NORMALIZED_TYPE_INT, NORMALIZED_TYPE_FLOAT):
+            return f"(`{column.name}` IS NULL OR `{column.name}` = 0)"
+        elif column.normalized_type == NORMALIZED_TYPE_DATE:
+            return f"(`{column.name}` IS NULL)"
+        else:
+            return f"(`{column.name}` IS NULL)"
+
+def in_expression_to_sql(expression: Expression, columns: Mapping[str, Column]) -> str:
+    column_name = expression.key.segments[0]
+    if column_name not in columns:
+        raise FlyqlError(f"unknown column: {column_name}")
+
+    column = columns[column_name]
+    is_not_in = expression.operator == Operator.NOT_IN.value
+
+    if not expression.values:
+        return "1" if is_not_in else "0"
+
+    if column.normalized_type is not None and not expression.key.is_segmented:
+        validate_in_list_types(expression.values, column.normalized_type)
+
+    values_sql = ", ".join(escape_param(v) for v in expression.values)
+    sql_op = "NOT IN" if is_not_in else "IN"
+
+    if expression.key.is_segmented:
+        if column.is_json:
+            json_path = expression.key.segments[1:]
+            for part in json_path:
+                validate_json_path_part(part)
+            json_path_str = "->".join(
+                f"'{part.replace(".", "\\\\.")}'" for part in json_path
+            )
+            return (
+                f"`{column.name}`->{json_path_str} {sql_op} ({values_sql})"
+            )
+        elif column.is_map:
+            map_path = expression.key.segments[1:]
+            map_key = "']['".join(map_path)
+            return f"`{column.name}`['{map_key}'] {sql_op} ({values_sql})"
+        elif column.is_array:
+            array_index_str = ".".join(expression.key.segments[1:])
+            try:
+                array_index = int(array_index_str)
+            except Exception as err:
+                raise FlyqlError(
+                    f"invalid array index, expected number: {array_index_str}"
+                ) from err
+            return f"`{column.name}`[{array_index}] {sql_op} ({values_sql})"
+        elif column.jsonstring:
+            json_path = expression.key.segments[1:]
+            json_path_str = "->".join(f"'{escape_param(x)}'" for x in json_path)
+            return f"parse_json(`{column.name}`)->{json_path_str} {sql_op} ({values_sql})"
+        else:
+            raise FlyqlError("path search for unsupported column type")
+    else:
+        return f"`{column.name}` {sql_op} ({values_sql})"
+
+
 def expression_to_sql(expression: Expression, columns: Mapping[str, Column]) -> str:
+    if expression.operator == Operator.TRUTHY.value:
+        return truthy_expression_to_sql(expression, columns)
+
+    if expression.operator in (Operator.IN.value, Operator.NOT_IN.value):
+        return in_expression_to_sql(expression, columns)
+
+    validate_operator(expression.operator)
     text = ""
 
     # TODO: support arbitrary nesting for map, array, struct types
@@ -145,7 +374,7 @@ def expression_to_sql(expression: Expression, columns: Mapping[str, Column]) -> 
             value = escape_param(expression.value)
             text = f"`{column.name}`['{map_key}'] {reverse_operator}{operator} {value}"
         elif column.is_array:
-            array_index_str = ":".join(expression.key.segments[1:])
+            array_index_str = ".".join(expression.key.segments[1:])
             try:
                 array_index = int(array_index_str)
             except Exception:
@@ -165,7 +394,7 @@ def expression_to_sql(expression: Expression, columns: Mapping[str, Column]) -> 
             json_path = expression.key.segments[1:]
             for part in json_path:
                 validate_json_path_part(part)
-            json_path_str = "->".join(f"'{part}'" for part in json_path)
+            json_path_str = "->".join(f"'{escape_param(part)}'" for part in json_path)
             value = escape_param(expression.value)
             text = f"parse_json(`{column.name}`)->{json_path_str} {reverse_operator}{operator} {value}"
         else:
@@ -218,9 +447,15 @@ def to_sql(root: Node, columns: Mapping[str, Column]) -> str:
     left = ""
     right = ""
     text = ""
+    is_negated = getattr(root, "negated", False)
 
     if root.expression is not None:
-        text = expression_to_sql(expression=root.expression, columns=columns)
+        # For negated truthy expressions, generate falsy SQL directly
+        if is_negated and root.expression.operator == Operator.TRUTHY.value:
+            text = falsy_expression_to_sql(expression=root.expression, columns=columns)
+            is_negated = False  # Already handled
+        else:
+            text = expression_to_sql(expression=root.expression, columns=columns)
 
     if root.left is not None:
         left = to_sql(root=root.left, columns=columns)
@@ -229,10 +464,14 @@ def to_sql(root: Node, columns: Mapping[str, Column]) -> str:
         right = to_sql(root=root.right, columns=columns)
 
     if len(left) > 0 and len(right) > 0:
+        validate_bool_operator(root.bool_operator)
         text = f"({left} {root.bool_operator} {right})"
     elif len(left) > 0:
         text = left
     elif len(right) > 0:
         text = right
+
+    if is_negated and text:
+        text = f"NOT ({text})"
 
     return text

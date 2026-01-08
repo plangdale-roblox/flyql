@@ -110,9 +110,7 @@ class TestExpressionToSQL:
         assert result == "`message` != 'hello'"
 
     def test_string_regex(self, fields: dict[str, Column]) -> None:
-        expr = Expression(
-            parse_key("message"), Operator.REGEX.value, "test.*", True
-        )
+        expr = Expression(parse_key("message"), Operator.REGEX.value, "test.*", True)
         result = expression_to_sql(expr, fields)
         assert result == "regexp(`message`, 'test.*')"
 
